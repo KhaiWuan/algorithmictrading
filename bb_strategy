@@ -1,0 +1,109 @@
+//@version=5
+strategy("Enhanced BB Strategy with MACD, RSI, and EMA", shorttitle="BB_strategy", overlay=true)
+
+i_from = input.time(timestamp("2023-04-02T00:00:00"),title="From")
+i_thru = input.time(timestamp("2023-11-20T23:59:59"),title="Thru")
+
+// Bollinger Bands Parameters
+length = input.int(20, title="BB Length", minval=1)
+mult_bb = input.float(2.0, title="BB StdDev Multiplier", minval=0.001, maxval=50)
+
+src = input(close, title="Source")
+basis_bb = ta.sma(src, length)
+dev_bb = mult_bb * ta.stdev(src, length)
+upper_bb = basis_bb + dev_bb
+lower_bb = basis_bb - dev_bb
+
+offset = input.int(0, "Offset", minval = -500, maxval = 500)
+
+// RSI Parameters
+rsiLength = input.int(14, title="RSI Length")
+rsiOverbought = input.float(70, title="RSI Overbought Level")
+rsiOversold = input.float(30, title="RSI Oversold Level")
+
+// MACD Parameters
+fastLength = input.int(12, title="MACD Fast Length")
+slowLength = input.int(26, title="MACD Slow Length")
+signalLength = input.int(9, title="MACD Signal Length")
+
+// EMA Parameters
+emaLength = input.int(50, title="EMA Length")
+emaSource = input(close, title="EMA Source")
+emaValue = ta.ema(emaSource, emaLength)
+
+// Moving Average Parameters for Trend Detection
+maLength = input.int(50, title="Moving Average Length")
+maSource = input(close, title="Moving Average Source")
+maValue = ta.sma(maSource, maLength)
+
+// Bollinger Bands Calculation
+dev = mult_bb * ta.stdev(src, length)
+upper = basis_bb + dev
+lower = basis_bb - dev
+
+// RSI Calculation
+rsiValue = ta.rsi(close, rsiLength)
+
+// MACD Calculation
+[macdLine, signalLine, _] = ta.macd(close, fastLength, slowLength, signalLength)
+
+// Plot Bollinger Bands
+plot(basis_bb, "Basis", color=color.orange, offset = offset)
+plot(upper_bb, "Upper", color=color.blue, offset = offset)
+plot(lower_bb, "Lower", color=color.blue, offset = offset)
+
+// Plot EMA
+plot(emaValue, "EMA", color=color.purple, offset = offset)
+
+// Calculate previous lower candle value
+lowerPrev = request.security(syminfo.tickerid, "D", lower[2])
+
+// Check conditions for buy signal (third candle)
+buyCondition = ta.crossover(close[2], lower_bb) and close[1] < lowerPrev and close[3] >= ta.lowest(low, 3)
+
+// Check conditions for buy signal based on RSI
+rsiBuyCondition = rsiValue < rsiOversold
+
+// Check conditions for sell signal
+sellCondition = ta.crossunder(close, upper_bb) and close[1] > close[2]
+
+// Check conditions for buy signal based on RSI
+rsiSellCondition = rsiValue > rsiOverbought
+
+// Check conditions for buy signal based on MACD
+macdBuyCondition = ta.crossover(macdLine, signalLine) and macdLine > 0
+
+// Check trend condition (not in a ranging market)
+trendCondition = close > maValue or close < maValue
+
+// Set stop loss and take profit levels
+stopLoss = strategy.position_avg_price * 0.98  // 2% stop loss
+takeProfit = strategy.position_avg_price * 1.02  // 2% profit target
+
+// Check conditions for taking profit when hitting the upper Bollinger Band
+takeProfitCondition = ta.crossunder(close, upper_bb)
+
+if time >= i_from and time <= i_thru
+
+    // Submit buy order
+    if (buyCondition or rsiBuyCondition or macdBuyCondition and trendCondition)
+        strategy.entry("Buy", strategy.long)
+
+    // Submit short order
+    if (sellCondition and trendCondition)
+        strategy.entry("Short", strategy.short)
+
+    // Exit conditions for both long and short
+    if (strategy.position_size != 0)
+        strategy.exit("Take Profit/Stop Loss", limit=takeProfit, stop=stopLoss)
+
+    // Take profit when hitting the upper Bollinger Band
+    if (strategy.position_size > 0 and takeProfitCondition)
+        strategy.exit("Take Profit BB Upper", limit=takeProfit)
+
+// Plot buy and sell markers on the chart
+plotshape(series=buyCondition or rsiBuyCondition or macdBuyCondition, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.triangleup, offset=offset)
+plotshape(series=sellCondition, title="Short Signal", location=location.abovebar, color=color.red, style=shape.triangledown, offset=offset)
+
+// Plot take profit markers on the chart
+plotshape(series=takeProfitCondition, title="Take Profit", location=location.abovebar, color=color.purple, style=shape.triangledown, offset=offset)
